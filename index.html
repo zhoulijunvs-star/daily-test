@@ -77,6 +77,26 @@ table.data-table th{background:#eef1f7;font-weight:600}
 .trend .tf{height:100%;background:linear-gradient(90deg,#2e7d32,#7cb342)}
 .trend .v{width:64px;text-align:right;color:#555}
 .hidden{display:none!important}
+/* 打卡日历 */
+.cal{margin-top:4px}
+.cal-row{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+.cal-head>div{text-align:center;font-size:12px;color:#888;padding:6px 0;font-weight:600}
+.cal-cell{border:1px solid #e6e9f0;border-radius:10px;min-height:62px;padding:6px;cursor:pointer;transition:.12s;display:flex;flex-direction:column;justify-content:space-between}
+.cal-cell.empty{border:none;background:transparent;cursor:default}
+.cal-cell:hover:not(.empty):not(.fut){border-color:var(--accent)}
+.cal-cell.today{border-color:var(--orange);box-shadow:0 0 0 2px #ffe3cc inset}
+.cal-cell.done{background:#e8f5e9;border-color:#a5d6a7}
+.cal-cell.partial{background:#fff8e1;border-color:#ffe082}
+.cal-cell.miss{background:#fdecea;border-color:#ef9a9a}
+.cal-cell.fut{background:#f3f3f3;color:#bbb;cursor:not-allowed}
+.cal-cell .cd{font-weight:700;font-size:15px}
+.cal-cell .cd small{font-size:10px;color:var(--orange);font-weight:400}
+.cal-cell .dots{display:flex;gap:4px;margin-top:4px}
+.cal-cell .dot{width:9px;height:9px;border-radius:50%;background:#e0e0e0;display:inline-block}
+.cal-cell .dot.on{background:var(--ok)}
+.cal-cell .cn{font-size:11px;color:#888;align-self:flex-end}
+.modebar{font-size:14px}
+.modebar b{color:var(--orange)}
 </style>
 </head>
 <body>
@@ -87,7 +107,9 @@ table.data-table th{background:#eef1f7;font-weight:600}
 </header>
 <div class="topnav">
   <button class="btn sec" id="toStats">📊 薄弱知识点统计</button>
+  <button class="btn sec" id="toCheckin">📅 打卡日历</button>
   <button class="btn sec hidden" id="toQuiz">← 返回刷题</button>
+  <button class="btn sec hidden" id="toToday">🔙 返回今日</button>
 </div>
 <div id="quizView">
   <div class="tabs" id="tabs"></div>
@@ -105,6 +127,9 @@ table.data-table th{background:#eef1f7;font-weight:600}
 <div id="statsView" class="hidden">
   <div class="stats" id="statsPanel"></div>
 </div>
+<div id="checkinView" class="hidden">
+  <div class="stats" id="checkinPanel"></div>
+</div>
 </div>
 
 <script>
@@ -115,10 +140,13 @@ const ORDER = ["法规","管理","经济"];
 
 function pad(x){return x<10?"0"+x:x;}
 function todayStr(){const d=new Date();return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());}
-function dayIndex(){const d=new Date();d.setHours(0,0,0,0);const base=new Date(2026,0,1);return Math.floor((d-base)/86400000);}
+function parseDate(s){const p=s.split("-");return new Date(+p[0],+p[1]-1,+p[2]);}
+function dayIndexFor(dateStr){const d=parseDate(dateStr);d.setHours(0,0,0,0);const base=new Date(2026,0,1);return Math.floor((d-base)/86400000);}
+function dayIndex(){return dayIndexFor(todayStr());}
+let viewDate=todayStr();   // 当前刷题/查看的日期；补做历史日时会切换为历史日期
 function pick(subj){
   const arr=BANK[subj]; if(!arr||!arr.length) return [];
-  const off=(dayIndex()*PER)%arr.length;
+  const off=(dayIndexFor(viewDate)*PER)%arr.length;
   const res=[];
   for(let i=0;i<PER;i++) res.push(arr[(off+i)%arr.length]);
   return res;
@@ -228,17 +256,19 @@ function submit(){
   box.innerHTML="<div class='result'><div class='score'>"+right+"/"+total+"</div>"+
     "<div class='det'>"+cur+" 正确率 "+pct+"%　｜　答对 "+right+" 题　答错 "+wrong+" 题</div>"+
     "<div class='hist'>"+todayStr()+" ｜ 题库共 "+STATS[cur].total+" 题，按日期滚动覆盖（按「题」计，多选题无论几个选项只算 1 题）</div></div>";
-  recordAttempts(cur);
+  recordAttempts(cur,viewDate);
+  markCheckin(cur,viewDate);
+  refreshCheckinBadge();
   box.scrollIntoView({behavior:"smooth"});
 }
-// 逐题记录薄弱知识点：今天该科以最后一次提交为准（重做不翻倍）
-function recordAttempts(subj){
+// 逐题记录薄弱知识点：某日期该科以最后一次提交为准（重做不翻倍）
+function recordAttempts(subj,dateStr){
   try{
     let arr=JSON.parse(localStorage.getItem("yijian_records")||"[]");
-    arr=arr.filter(r=>!(r.date===todayStr()&&r.subject===subj));
+    arr=arr.filter(r=>!(r.date===dateStr&&r.subject===subj));
     sets[subj].forEach((q,idx)=>{
       const sel=getSel(idx);
-      arr.push({date:todayStr(),subject:subj,kp:q.ch,type:q.type,correct:sel===q.ans,hasTable:!!q.hasTable,qid:q.stem.slice(0,40)});
+      arr.push({date:dateStr,subject:subj,kp:q.ch,type:q.type,correct:sel===q.ans,hasTable:!!q.hasTable,qid:q.stem.slice(0,40)});
     });
     localStorage.setItem("yijian_records",JSON.stringify(arr.slice(-8000)));
   }catch(e){}
@@ -255,9 +285,137 @@ function showStats(){
 }
 function showQuiz(){
   document.getElementById("statsView").classList.add("hidden");
+  document.getElementById("checkinView").classList.add("hidden");
   document.getElementById("quizView").classList.remove("hidden");
   document.getElementById("toQuiz").classList.add("hidden");
   document.getElementById("toStats").classList.remove("hidden");
+  document.getElementById("toCheckin").classList.remove("hidden");
+  updateModeBar();
+}
+
+/* ====== 打卡日历 + 补做 ====== */
+const CK_KEY="yijian_checkins";
+function getCheckins(){try{return JSON.parse(localStorage.getItem(CK_KEY)||"{}");}catch(e){return {};}}
+function markCheckin(subj,dateStr){
+  const ck=getCheckins();
+  if(!ck[dateStr]) ck[dateStr]={};
+  ck[dateStr][subj]=1;
+  ck[dateStr]._ts=Date.now();
+  localStorage.setItem(CK_KEY,JSON.stringify(ck));
+}
+function isDone(dateStr,subj){const ck=getCheckins();return !!(ck[dateStr]&&ck[dateStr][subj]);}
+function dayDoneCount(dateStr){const ck=getCheckins();if(!ck[dateStr])return 0;return ORDER.filter(s=>ck[dateStr][s]).length;}
+function totalCheckinDays(){const ck=getCheckins();return Object.keys(ck).filter(d=>ORDER.some(s=>ck[d]&&ck[d][s])).length;}
+function streak(){
+  const ck=getCheckins();
+  const has=d=>ORDER.some(s=>ck[d]&&ck[d][s]);
+  let cur=new Date();
+  if(!has(todayStr())) cur.setDate(cur.getDate()-1);  // 今天还没打卡则从昨天起算，不算断
+  let s=0;
+  while(true){
+    const ds=cur.getFullYear()+"-"+pad(cur.getMonth()+1)+"-"+pad(cur.getDate());
+    if(has(ds)){s++;cur.setDate(cur.getDate()-1);}else break;
+  }
+  return s;
+}
+function refreshCheckinBadge(){
+  const b=document.getElementById("toCheckin");
+  if(b){const n=dayDoneCount(todayStr());b.textContent="📅 打卡日历 · 今日"+n+"/3";}
+}
+function updateModeBar(){
+  const el=document.getElementById("subdate");
+  if(viewDate===todayStr()){
+    el.textContent="每日 "+todayStr()+" ｜ 法规/管理/经济 各 "+PER+" 题（单选+多选）";
+    document.getElementById("toToday").classList.add("hidden");
+  }else{
+    el.innerHTML="📅 <b>补做模式："+viewDate+"</b>（点击「返回今日」回到今天）｜ 该日题目 各 "+PER+" 题";
+    document.getElementById("toToday").classList.remove("hidden");
+  }
+}
+let calMonth=null;
+function showCheckin(){
+  document.getElementById("quizView").classList.add("hidden");
+  document.getElementById("statsView").classList.add("hidden");
+  document.getElementById("checkinView").classList.remove("hidden");
+  document.getElementById("toStats").classList.add("hidden");
+  document.getElementById("toCheckin").classList.add("hidden");
+  document.getElementById("toQuiz").classList.remove("hidden");
+  const t=new Date();
+  if(!calMonth) calMonth={y:t.getFullYear(),m:t.getMonth()};
+  renderCalendar();
+}
+function enterMakeup(ds){
+  viewDate=ds;
+  buildSets();renderTabs();renderQuiz();
+  document.getElementById("checkinView").classList.add("hidden");
+  document.getElementById("quizView").classList.remove("hidden");
+  document.getElementById("toQuiz").classList.add("hidden");
+  document.getElementById("toCheckin").classList.remove("hidden");
+  document.getElementById("toToday").classList.remove("hidden");
+  updateModeBar();
+  refreshCheckinBadge();
+  window.scrollTo({top:0,behavior:"smooth"});
+}
+function renderCalendar(){
+  const panel=document.getElementById("checkinPanel");
+  const y=calMonth.y, m=calMonth.m;
+  const today=todayStr();
+  const ck=getCheckins();
+  const ym=y+"-"+pad(m+1);
+  const first=new Date(y,m,1);
+  const startDow=(first.getDay()+6)%7;
+  const daysInMonth=new Date(y,m+1,0).getDate();
+  const monthDates=Object.keys(ck).filter(d=>d.slice(0,7)===ym);
+  const fullDays=monthDates.filter(d=>ORDER.every(s=>ck[d]&&ck[d][s])).length;
+  let h="<h2>📅 打卡日历</h2>";
+  h+="<div class='ov'>"+
+     "<div><b>"+totalCheckinDays()+"</b>累计打卡天</div>"+
+     "<div><b>"+streak()+"</b>连续打卡</div>"+
+     "<div><b>"+fullDays+"</b>"+pad(m+1)+"月全勤天</div>"+
+     "<div><b>"+(daysInMonth?Math.round(fullDays/daysInMonth*100):0)+"%</b>本月全勤率</div></div>";
+  h+="<div style='display:flex;justify-content:space-between;align-items:center;margin:14px 0'>"+
+     "<button class='btn sec' id='prevM'>‹ 上月</button>"+
+     "<b style='font-size:16px'>"+y+"年 "+(m+1)+"月</b>"+
+     "<button class='btn sec' id='nextM'>下月 ›</button></div>";
+  h+="<div class='cal'>";
+  const wks=["一","二","三","四","五","六","日"];
+  h+="<div class='cal-row cal-head'>"+wks.map(w=>"<div>"+w+"</div>").join("")+"</div>";
+  let cells="<div class='cal-row'>";
+  for(let i=0;i<startDow;i++) cells+="<div class='cal-cell empty'></div>";
+  for(let d=1;d<=daysInMonth;d++){
+    const ds=y+"-"+pad(m+1)+"-"+pad(d);
+    const fut=ds>today;
+    const n=dayDoneCount(ds);
+    const isToday=ds===today;
+    let cls="cal-cell"+(fut?" fut":"")+(isToday?" today":"")+(n>=3?" done":(n>0?" partial":(fut?"":" miss")));
+    let dots=ORDER.map(s=>"<i class='"+(isDone(ds,s)?"dot on":"dot")+"'></i>").join("");
+    let inner="<div class='cd'>"+d+(isToday?" <small>今</small>":"")+"</div>"+
+              "<div class='dots'>"+dots+"</div>"+
+              (n>0?("<div class='cn'>"+n+"/3</div>"):"");
+    cells+="<div class='"+cls+"' data-d='"+ds+"'>"+inner+"</div>";
+  }
+  cells+="</div>";
+  h+=cells+"</div>";
+  h+="<div class='note'>点击任意日期可加载当天题目 <b>补做</b>（未来日期不可补）。<span style='color:#2e7d32'>绿</span>=三科全做　<span style='color:#f39c12'>黄</span>=部分完成　<span style='color:#c62828'>红</span>=未做。小圆点：●法规 ●管理 ●经济（亮=已做）。</div>";
+  h+="<div style='display:flex;gap:8px;flex-wrap:wrap;margin-top:10px'>"+
+     "<button class='btn sec' id='ckExp'>⬇ 导出打卡记录</button>"+
+     "<button class='btn sec' id='ckClr' style='color:#c62828'>🗑 清空打卡</button></div>";
+  panel.innerHTML=h;
+  panel.querySelectorAll(".cal-cell[data-d]").forEach(c=>{
+    const ds=c.dataset.d;
+    if(ds>today) return;   // 未来日期不可补做
+    c.onclick=()=>enterMakeup(ds);
+  });
+  document.getElementById("prevM").onclick=()=>{calMonth.m--; if(calMonth.m<0){calMonth.m=11;calMonth.y--;}renderCalendar();};
+  document.getElementById("nextM").onclick=()=>{calMonth.m++; if(calMonth.m>11){calMonth.m=0;calMonth.y++;}renderCalendar();};
+  document.getElementById("ckExp").onclick=()=>{
+    const blob=new Blob([JSON.stringify(getCheckins(),null,2)],{type:"application/json"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);
+    a.download="一建打卡记录_"+todayStr()+".json";a.click();
+  };
+  document.getElementById("ckClr").onclick=()=>{
+    if(confirm("确认清空全部打卡记录？此操作不可恢复。")){localStorage.removeItem(CK_KEY);calMonth=null;renderCalendar();refreshCheckinBadge();}
+  };
 }
 function renderStats(){
   let arr=[];
@@ -366,9 +524,12 @@ document.getElementById("submit").onclick=submit;
 document.getElementById("restart").onclick=restart;
 document.getElementById("toStats").onclick=showStats;
 document.getElementById("toQuiz").onclick=showQuiz;
-document.getElementById("subdate").textContent="每日 "+todayStr()+" ｜ 法规/管理/经济 各 "+PER+" 题（单选+多选）";
-document.getElementById("note").textContent="说明：每日按日期顺序从题库抽取，三科轮换覆盖、不重复；题干中的数据表已渲染，提及图但知识库无图的题会标注。提交后显示解析，并自动记录薄弱知识点。";
-buildSets();renderTabs();renderQuiz();
+document.getElementById("toCheckin").onclick=showCheckin;
+document.getElementById("toToday").onclick=()=>{
+  viewDate=todayStr();buildSets();renderTabs();renderQuiz();showQuiz();refreshCheckinBadge();
+};
+document.getElementById("note").textContent="说明：每日按日期顺序从题库抽取，三科轮换覆盖、不重复；题干中的数据表已渲染，提及图但知识库无图的题会标注。提交后显示解析，并自动记录薄弱知识点与打卡。点「📅 打卡日历」可查看每天是否完成、补做漏刷的日期。";
+buildSets();renderTabs();renderQuiz();updateModeBar();refreshCheckinBadge();
 </script>
 </body>
 </html>
