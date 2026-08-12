@@ -106,6 +106,7 @@ table.data-table th{background:#eef1f7;font-weight:600}
   <div class="sub" id="subdate"></div>
 </header>
 <div class="topnav">
+  <button class="btn sec" id="toMuti">📚 大V母题</button>
   <button class="btn sec" id="toStats">📊 薄弱知识点统计</button>
   <button class="btn sec" id="toCheckin">📅 打卡日历</button>
   <button class="btn sec hidden" id="toQuiz">← 返回刷题</button>
@@ -123,6 +124,9 @@ table.data-table th{background:#eef1f7;font-weight:600}
   <div class="note" id="note"></div>
   <div id="quiz"></div>
   <div id="resultBox"></div>
+</div>
+<div id="mutiView" class="hidden">
+  <div class="stats" id="mutiPanel"></div>
 </div>
 <div id="statsView" class="hidden">
   <div class="stats" id="statsPanel"></div>
@@ -146,6 +150,9 @@ function dayIndex(){return dayIndexFor(todayStr());}
 let viewDate=todayStr();   // 当前刷题/查看的日期；补做历史日时会切换为历史日期
 function pick(subj){
   const arr=BANK[subj]; if(!arr||!arr.length) return [];
+  return pickFrom(arr);
+}
+function pickFrom(arr){
   const off=(dayIndexFor(viewDate)*PER)%arr.length;
   const res=[];
   for(let i=0;i<PER;i++) res.push(arr[(off+i)%arr.length]);
@@ -153,10 +160,33 @@ function pick(subj){
 }
 let cur=ORDER[0];
 let sets={};
-function buildSets(){ORDER.forEach(s=>sets[s]=pick(s));}
+// 大V母题专项：按 tag 抽取对应科目母题，进入专项模式
+let mutiMode=null;   // null=每日模式；{subj,tag} 表示母题专项
+function mutiPool(){  // 当前专项的母题数组
+  if(!mutiMode) return [];
+  const subj=mutiMode.subj;
+  return BANK[subj].filter(q=>q.tag===mutiMode.tag);
+}
+function buildSets(){
+  if(mutiMode){
+    sets[mutiMode.subj]=pickFrom(mutiPool());
+  }else{
+    ORDER.forEach(s=>sets[s]=pick(s));
+  }
+}
 
 function renderTabs(){
   const el=document.getElementById("tabs");el.innerHTML="";
+  if(mutiMode){
+    const t=document.createElement("div");
+    t.className="tab active";
+    const pool=mutiPool();
+    let c=pool.length+"母题 / 每日"+PER;
+    t.innerHTML=(mutiMode.subj==="管理"?"📚 管理·金月母题":"📚 经济·蔺飞飞母题")+"<span class='cnt'>"+c+"</span>";
+    t.onclick=()=>{exitMuti();};
+    el.appendChild(t);
+    return;
+  }
   ORDER.forEach(s=>{
     const t=document.createElement("div");
     t.className="tab"+(s===cur?" active":"");
@@ -183,8 +213,9 @@ function safeStem(s){
 function esc(s){return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
 function renderQuiz(){
   const box=document.getElementById("quiz");
+  if(mutiMode) cur=mutiMode.subj;
   const arr=sets[cur];
-  document.getElementById("progress").textContent="当前科目："+cur+" ｜ 第 1–"+arr.length+" 题";
+  document.getElementById("progress").textContent=(mutiMode?"专项 · "+(mutiMode.subj==="管理"?"金月母题":"蔺飞飞母题")+" ｜ ":"当前科目：")+cur+" ｜ 第 1–"+arr.length+" 题";
   document.getElementById("resultBox").innerHTML="";
   let h="";
   arr.forEach((q,idx)=>{
@@ -253,9 +284,10 @@ function submit(){
   const pct=Math.round(right/total*100);
   const wrong=total-right;
   const box=document.getElementById("resultBox");
+  const poolTotal=mutiMode?mutiPool().length:STATS[cur].total;
   box.innerHTML="<div class='result'><div class='score'>"+right+"/"+total+"</div>"+
     "<div class='det'>"+cur+" 正确率 "+pct+"%　｜　答对 "+right+" 题　答错 "+wrong+" 题</div>"+
-    "<div class='hist'>"+todayStr()+" ｜ 题库共 "+STATS[cur].total+" 题，按日期滚动覆盖（按「题」计，多选题无论几个选项只算 1 题）</div></div>";
+    "<div class='hist'>"+todayStr()+" ｜ "+(mutiMode?"母题专项":"题库共 "+poolTotal+" 题")+"，按日期滚动覆盖（按「题」计，多选题无论几个选项只算 1 题）</div></div>";
   recordAttempts(cur,viewDate);
   markCheckin(cur,viewDate);
   refreshCheckinBadge();
@@ -275,9 +307,61 @@ function recordAttempts(subj,dateStr){
 }
 function restart(){renderQuiz();}
 
+/* ====== 大V母题专项 ====== */
+function showMuti(){
+  document.getElementById("quizView").classList.add("hidden");
+  document.getElementById("statsView").classList.add("hidden");
+  document.getElementById("checkinView").classList.add("hidden");
+  document.getElementById("mutiView").classList.remove("hidden");
+  document.getElementById("toStats").classList.add("hidden");
+  document.getElementById("toCheckin").classList.add("hidden");
+  document.getElementById("toQuiz").classList.remove("hidden");
+  renderMutiPanel();
+}
+function renderMutiPanel(){
+  const panel=document.getElementById("mutiPanel");
+  const pkgs=[
+    {subj:"管理",tag:"金月母题带练",label:"📚 管理 · 金月《大V母题带练》"},
+    {subj:"经济",tag:"蔺飞飞母题带练",label:"📈 经济 · 蔺飞飞《大V母题带练》"},
+  ];
+  let h="<h2>📚 大V母题专项</h2>";
+  h+="<p class='note' style='margin:4px 0 12px'>选择专项后按日期滚动抽取每日 20 题，与每日刷题独立，同样计入打卡与薄弱统计。</p>";
+  pkgs.forEach(p=>{
+    const pool=BANK[p.subj].filter(q=>q.tag===p.tag);
+    if(!pool.length) return;
+    const single=pool.filter(q=>q.type==="single").length;
+    const multi=pool.length-single;
+    h+="<div style='background:var(--card);border:2px solid #e3e6ef;border-radius:12px;padding:16px;margin-bottom:12px;cursor:pointer' onclick=\"enterMuti('"+p.subj+"','"+p.tag+"')\">";
+    h+="<div style='font-weight:700;font-size:16px'>"+p.label+"</div>";
+    h+="<div style='color:#888;font-size:13px;margin-top:4px'>共 "+pool.length+" 题（单选 "+single+" / 多选 "+multi+"）｜ 点击进入专项刷题 →</div>";
+    h+="</div>";
+  });
+  h+="<p class='note'>提示：母题题干中的表格已正常渲染；涉及网络图/组织结构图等图形的题目因 PDF 无法提取图片，会标注「本题原图缺失」。</p>";
+  panel.innerHTML=h;
+}
+function enterMuti(subj,tag){
+  mutiMode={subj:subj,tag:tag};
+  cur=subj;
+  buildSets();renderTabs();renderQuiz();
+  document.getElementById("mutiView").classList.add("hidden");
+  document.getElementById("quizView").classList.remove("hidden");
+  document.getElementById("toQuiz").classList.add("hidden");
+  document.getElementById("toStats").classList.remove("hidden");
+  document.getElementById("toCheckin").classList.remove("hidden");
+  updateModeBar();
+  refreshCheckinBadge();
+  window.scrollTo({top:0,behavior:"smooth"});
+}
+function exitMuti(){
+  mutiMode=null;
+  viewDate=todayStr();
+  buildSets();renderTabs();renderQuiz();showQuiz();
+}
+
 /* ====== 薄弱知识点统计面板 ====== */
 function showStats(){
   document.getElementById("quizView").classList.add("hidden");
+  document.getElementById("mutiView").classList.add("hidden");
   document.getElementById("statsView").classList.remove("hidden");
   document.getElementById("toStats").classList.add("hidden");
   document.getElementById("toQuiz").classList.remove("hidden");
@@ -286,6 +370,7 @@ function showStats(){
 function showQuiz(){
   document.getElementById("statsView").classList.add("hidden");
   document.getElementById("checkinView").classList.add("hidden");
+  document.getElementById("mutiView").classList.add("hidden");
   document.getElementById("quizView").classList.remove("hidden");
   document.getElementById("toQuiz").classList.add("hidden");
   document.getElementById("toStats").classList.remove("hidden");
@@ -324,7 +409,10 @@ function refreshCheckinBadge(){
 }
 function updateModeBar(){
   const el=document.getElementById("subdate");
-  if(viewDate===todayStr()){
+  if(mutiMode){
+    el.innerHTML="📚 <b>母题专项："+(mutiMode.subj==="管理"?"管理·金月":"经济·蔺飞飞")+"</b> ｜ 每日 "+PER+" 题（点「返回刷题」退出专项）";
+    document.getElementById("toToday").classList.add("hidden");
+  }else if(viewDate===todayStr()){
     el.textContent="每日 "+todayStr()+" ｜ 法规/管理/经济 各 "+PER+" 题（单选+多选）";
     document.getElementById("toToday").classList.add("hidden");
   }else{
@@ -336,6 +424,7 @@ let calMonth=null;
 function showCheckin(){
   document.getElementById("quizView").classList.add("hidden");
   document.getElementById("statsView").classList.add("hidden");
+  document.getElementById("mutiView").classList.add("hidden");
   document.getElementById("checkinView").classList.remove("hidden");
   document.getElementById("toStats").classList.add("hidden");
   document.getElementById("toCheckin").classList.add("hidden");
@@ -525,10 +614,11 @@ document.getElementById("restart").onclick=restart;
 document.getElementById("toStats").onclick=showStats;
 document.getElementById("toQuiz").onclick=showQuiz;
 document.getElementById("toCheckin").onclick=showCheckin;
+document.getElementById("toMuti").onclick=showMuti;
 document.getElementById("toToday").onclick=()=>{
   viewDate=todayStr();buildSets();renderTabs();renderQuiz();showQuiz();refreshCheckinBadge();
 };
-document.getElementById("note").textContent="说明：每日按日期顺序从题库抽取，三科轮换覆盖、不重复；题干中的数据表已渲染，提及图但知识库无图的题会标注。提交后显示解析，并自动记录薄弱知识点与打卡。点「📅 打卡日历」可查看每天是否完成、补做漏刷的日期。";
+document.getElementById("note").textContent="说明：每日按日期顺序从题库抽取，三科轮换覆盖、不重复；题干中的数据表已渲染，提及图但知识库无图的题会标注。提交后显示解析，并自动记录薄弱知识点与打卡。点「📚 大V母题」可专项刷金月/蔺飞飞母题，点「📅 打卡日历」可查看每天是否完成、补做漏刷的日期。";
 buildSets();renderTabs();renderQuiz();updateModeBar();refreshCheckinBadge();
 </script>
 </body>
